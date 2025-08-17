@@ -1,0 +1,168 @@
+--// FLZ Pulse Button + X Keybind (0.2s delay + 1.1s pullback) + Animated Dot + Status Text
+--// By Flazed | Colors: Orange / Black / White | Bigger GUI
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local LP = Players.LocalPlayer
+local Char = LP.Character or LP.CharacterAdded:Wait()
+
+-- settings
+local EXTEND_LEN = 80
+local RETRACT_LEN = 5
+local RETRACT_TIME = 1.1
+local KEY_DELAY = 0.2
+
+-- track rope
+local LastRope
+local function tweenLength(rope, targetLen, dur)
+	if not (rope and rope.Parent) then return end
+	if dur <= 0 then rope.Length = targetLen return end
+	local start = rope.Length
+	local t0 = os.clock()
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		local a = (os.clock() - t0)/dur
+		if a >= 1 then
+			rope.Length = targetLen
+			conn:Disconnect()
+		else
+			rope.Length = start + (targetLen - start)*a
+		end
+	end)
+end
+
+local function adoptRope(rope)
+	if not rope:IsA("RopeConstraint") then return end
+	if not rope.Attachment0 or not rope.Attachment1 then return end
+	local a0p, a1p = rope.Attachment0.Parent, rope.Attachment1.Parent
+	if not (a0p and a1p) then return end
+	if a0p:IsDescendantOf(Char) and not a1p:IsDescendantOf(Char) then
+		LastRope = rope
+		_G.__FLZ_LastRope = rope
+	end
+end
+
+for _, inst in ipairs(workspace:GetDescendants()) do
+	if inst:IsA("RopeConstraint") then adoptRope(inst) end
+end
+workspace.DescendantAdded:Connect(function(inst)
+	if inst:IsA("RopeConstraint") then task.defer(function() adoptRope(inst) end) end
+end)
+LP.CharacterAdded:Connect(function(c)
+	Char = c
+	task.delay(1, function()
+		for _, inst in ipairs(workspace:GetDescendants()) do
+			if inst:IsA("RopeConstraint") then adoptRope(inst) end
+		end
+	end)
+end)
+
+-- GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "FLZ_Pulse"
+gui.ResetOnSpawn = false
+gui.Parent = game:GetService("CoreGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 190, 0, 88) -- bigger
+frame.Position = UDim2.new(0, 40, 0, 200)
+frame.BackgroundColor3 = Color3.fromRGB(10,10,10)
+frame.BackgroundTransparency = 0.08
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0,14)
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 2
+stroke.Transparency = 0.25
+stroke.Color = Color3.fromRGB(255,140,0)
+stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+stroke.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -28, 0, 26) -- taller
+title.Position = UDim2.new(0, 10, 0, 6)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.TextSize = 16 -- larger
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.TextColor3 = Color3.fromRGB(255,140,0)
+title.Text = "By Flazed"
+title.Parent = frame
+
+-- animated dot
+local dot = Instance.new("Frame")
+dot.Name = "FLZ_Dot"
+dot.Size = UDim2.new(0, 12, 0, 12) -- bigger dot
+dot.Position = UDim2.new(1, -20, 0, 10)
+dot.BackgroundColor3 = Color3.fromRGB(255,140,0)
+dot.BackgroundTransparency = 0.05
+dot.BorderSizePixel = 0
+dot.Parent = frame
+Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+local dotGlow = Instance.new("UIStroke")
+dotGlow.Thickness = 1.2
+dotGlow.Color = Color3.fromRGB(255,140,0)
+dotGlow.Transparency = 0.4
+dotGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+dotGlow.Parent = dot
+
+-- breathing loop
+local breatheIn = TweenService:Create(dot, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Size = UDim2.new(0, 15, 0, 15), BackgroundTransparency = 0.15})
+local breatheOut = TweenService:Create(dot, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Size = UDim2.new(0, 12, 0, 12), BackgroundTransparency = 0.05})
+breatheIn.Completed:Connect(function() if dot.Parent then breatheOut:Play() end end)
+breatheOut.Completed:Connect(function() if dot.Parent then breatheIn:Play() end end)
+breatheIn:Play()
+
+-- pulse button
+local pulseBtn = Instance.new("TextButton")
+pulseBtn.Size = UDim2.new(1, -22, 0, 42) -- bigger button
+pulseBtn.Position = UDim2.new(0, 11, 0, 36)
+pulseBtn.BackgroundColor3 = Color3.fromRGB(255,140,0)
+pulseBtn.BorderSizePixel = 0
+pulseBtn.TextColor3 = Color3.fromRGB(255,255,255)
+pulseBtn.TextSize = 18 -- larger
+pulseBtn.Font = Enum.Font.GothamSemibold
+pulseBtn.Text = "PULSE (X)"
+pulseBtn.Parent = frame
+Instance.new("UICorner", pulseBtn).CornerRadius = UDim.new(0,10)
+
+local pulsing = false
+local function setPulsingUI(active)
+	if active then
+		pulseBtn.Text = "Pulsing..."
+		TweenService:Create(dot, TweenInfo.new(0.08), {BackgroundColor3 = Color3.fromRGB(255,200,120)}):Play()
+	else
+		pulseBtn.Text = "PULSE (X)"
+		TweenService:Create(dot, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(255,140,0)}):Play()
+	end
+end
+
+local function doPulse()
+	if pulsing then return end
+	local rope = LastRope
+	if not (rope and rope.Parent) then return end
+	pulsing = true
+	setPulsingUI(true)
+	rope.Length = EXTEND_LEN
+	tweenLength(rope, RETRACT_LEN, RETRACT_TIME)
+	task.delay(RETRACT_TIME + 0.05, function()
+		pulsing = false
+		setPulsingUI(false)
+	end)
+end
+
+pulseBtn.MouseButton1Click:Connect(doPulse)
+
+UIS.InputBegan:Connect(function(i,gp)
+	if gp then return end
+	if i.KeyCode == Enum.KeyCode.X then
+		task.delay(KEY_DELAY, function() doPulse() end)
+	end
+end)
