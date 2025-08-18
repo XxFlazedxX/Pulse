@@ -1,168 +1,194 @@
---// FLZ Pulse Button + X Keybind (0.2s delay + 1.1s pullback) + Animated Dot + Status Text
---// By Flazed | Colors: Orange / Black / White | Bigger GUI
+--[[
+  Fullscreen Lock GUI — "Choco you suck!!"
+  - Covers the whole screen with a message
+  - Grabs focus, sinks inputs, hides core UI, locks mouse to center
+  - Makes it VERY hard to click the Roblox Leave button (ESC)
+  - Note: Roblox/OS-level quit (ESC menu/Alt+F4) cannot be 100% blocked.
+
+  Optional panic unloader for YOU (the runner): press RightAlt to remove.
+]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
+local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
+local StarterGui = game:GetService("StarterGui")
+local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
 
 local LP = Players.LocalPlayer
-local Char = LP.Character or LP.CharacterAdded:Wait()
 
--- settings
-local EXTEND_LEN = 80
-local RETRACT_LEN = 5
-local RETRACT_TIME = 1.1
-local KEY_DELAY = 0.2
-
--- track rope
-local LastRope
-local function tweenLength(rope, targetLen, dur)
-	if not (rope and rope.Parent) then return end
-	if dur <= 0 then rope.Length = targetLen return end
-	local start = rope.Length
-	local t0 = os.clock()
-	local conn
-	conn = RunService.Heartbeat:Connect(function()
-		local a = (os.clock() - t0)/dur
-		if a >= 1 then
-			rope.Length = targetLen
-			conn:Disconnect()
-		else
-			rope.Length = start + (targetLen - start)*a
-		end
-	end)
-end
-
-local function adoptRope(rope)
-	if not rope:IsA("RopeConstraint") then return end
-	if not rope.Attachment0 or not rope.Attachment1 then return end
-	local a0p, a1p = rope.Attachment0.Parent, rope.Attachment1.Parent
-	if not (a0p and a1p) then return end
-	if a0p:IsDescendantOf(Char) and not a1p:IsDescendantOf(Char) then
-		LastRope = rope
-		_G.__FLZ_LastRope = rope
-	end
-end
-
-for _, inst in ipairs(workspace:GetDescendants()) do
-	if inst:IsA("RopeConstraint") then adoptRope(inst) end
-end
-workspace.DescendantAdded:Connect(function(inst)
-	if inst:IsA("RopeConstraint") then task.defer(function() adoptRope(inst) end) end
-end)
-LP.CharacterAdded:Connect(function(c)
-	Char = c
-	task.delay(1, function()
-		for _, inst in ipairs(workspace:GetDescendants()) do
-			if inst:IsA("RopeConstraint") then adoptRope(inst) end
-		end
-	end)
-end)
-
--- GUI
+-- create or reuse gui
 local gui = Instance.new("ScreenGui")
-gui.Name = "FLZ_Pulse"
+gui.Name = "ChocoLockGUI"
+gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
-gui.Parent = game:GetService("CoreGui")
+pcall(function()
+	gui.DisplayOrder = 1000000000 -- very high
+end)
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 190, 0, 88) -- bigger
-frame.Position = UDim2.new(0, 40, 0, 200)
-frame.BackgroundColor3 = Color3.fromRGB(10,10,10)
-frame.BackgroundTransparency = 0.08
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0,14)
-
-local stroke = Instance.new("UIStroke")
-stroke.Thickness = 2
-stroke.Transparency = 0.25
-stroke.Color = Color3.fromRGB(255,140,0)
-stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-stroke.Parent = frame
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -28, 0, 26) -- taller
-title.Position = UDim2.new(0, 10, 0, 6)
-title.BackgroundTransparency = 1
-title.Font = Enum.Font.GothamBold
-title.TextSize = 16 -- larger
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.TextColor3 = Color3.fromRGB(255,140,0)
-title.Text = "By Flazed"
-title.Parent = frame
-
--- animated dot
-local dot = Instance.new("Frame")
-dot.Name = "FLZ_Dot"
-dot.Size = UDim2.new(0, 12, 0, 12) -- bigger dot
-dot.Position = UDim2.new(1, -20, 0, 10)
-dot.BackgroundColor3 = Color3.fromRGB(255,140,0)
-dot.BackgroundTransparency = 0.05
-dot.BorderSizePixel = 0
-dot.Parent = frame
-Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
-
-local dotGlow = Instance.new("UIStroke")
-dotGlow.Thickness = 1.2
-dotGlow.Color = Color3.fromRGB(255,140,0)
-dotGlow.Transparency = 0.4
-dotGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-dotGlow.Parent = dot
-
--- breathing loop
-local breatheIn = TweenService:Create(dot, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Size = UDim2.new(0, 15, 0, 15), BackgroundTransparency = 0.15})
-local breatheOut = TweenService:Create(dot, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Size = UDim2.new(0, 12, 0, 12), BackgroundTransparency = 0.05})
-breatheIn.Completed:Connect(function() if dot.Parent then breatheOut:Play() end end)
-breatheOut.Completed:Connect(function() if dot.Parent then breatheIn:Play() end end)
-breatheIn:Play()
-
--- pulse button
-local pulseBtn = Instance.new("TextButton")
-pulseBtn.Size = UDim2.new(1, -22, 0, 42) -- bigger button
-pulseBtn.Position = UDim2.new(0, 11, 0, 36)
-pulseBtn.BackgroundColor3 = Color3.fromRGB(255,140,0)
-pulseBtn.BorderSizePixel = 0
-pulseBtn.TextColor3 = Color3.fromRGB(255,255,255)
-pulseBtn.TextSize = 18 -- larger
-pulseBtn.Font = Enum.Font.GothamSemibold
-pulseBtn.Text = "PULSE (X)"
-pulseBtn.Parent = frame
-Instance.new("UICorner", pulseBtn).CornerRadius = UDim.new(0,10)
-
-local pulsing = false
-local function setPulsingUI(active)
-	if active then
-		pulseBtn.Text = "Pulsing..."
-		TweenService:Create(dot, TweenInfo.new(0.08), {BackgroundColor3 = Color3.fromRGB(255,200,120)}):Play()
-	else
-		pulseBtn.Text = "PULSE (X)"
-		TweenService:Create(dot, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(255,140,0)}):Play()
-	end
+-- parent into CoreGui if allowed, else PlayerGui
+pcall(function()
+	gui.Parent = CoreGui
+end)
+if not gui.Parent then
+	gui.Parent = LP:WaitForChild("PlayerGui")
 end
 
-local function doPulse()
-	if pulsing then return end
-	local rope = LastRope
-	if not (rope and rope.Parent) then return end
-	pulsing = true
-	setPulsingUI(true)
-	rope.Length = EXTEND_LEN
-	tweenLength(rope, RETRACT_LEN, RETRACT_TIME)
-	task.delay(RETRACT_TIME + 0.05, function()
-		pulsing = false
-		setPulsingUI(false)
+-- full black background
+local bg = Instance.new("Frame")
+bg.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+bg.BorderSizePixel = 0
+bg.Size = UDim2.fromScale(1, 1)
+bg.Parent = gui
+
+-- subtle animated gradient for drama
+local grad = Instance.new("UIGradient")
+grad.Color = ColorSequence.new{
+	ColorSequenceKeypoint.new(0.0, Color3.fromRGB(20,20,20)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(40,40,40)),
+	ColorSequenceKeypoint.new(1.0, Color3.fromRGB(20,20,20)),
+}
+grad.Rotation = 0
+grad.Parent = bg
+
+-- big message
+local text = Instance.new("TextLabel")
+text.BackgroundTransparency = 1
+text.Size = UDim2.fromScale(1, 1)
+text.Text = "Choco you suck!!"
+text.Font = Enum.Font.GothamBlack
+text.TextScaled = true
+text.TextColor3 = Color3.fromRGB(255, 255, 255)
+text.TextStrokeTransparency = 0.1
+text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+text.Parent = bg
+
+-- fun bounce tween
+local function bounce()
+	local s = 1.0
+	local dir = 1
+	local tconn
+	tconn = RunService.Heartbeat:Connect(function(dt)
+		s += dt * 0.7 * dir
+		if s >= 1.05 then dir = -1 end
+		if s <= 0.95 then dir = 1 end
+		text.TextSize = math.floor(100 * s)
 	end)
+	return tconn
 end
+local bounceConn = bounce()
 
-pulseBtn.MouseButton1Click:Connect(doPulse)
+-- modal blocker to eat clicks
+local blocker = Instance.new("TextButton")
+blocker.Name = "ModalBlocker"
+blocker.Size = UDim2.fromScale(1, 1)
+blocker.Position = UDim2.fromScale(0, 0)
+blocker.BackgroundTransparency = 1
+blocker.Text = ""
+blocker.Modal = true -- captures input focus for keyboard/gamepad
+blocker.AutoButtonColor = false
+blocker.ZIndex = 2
+blocker.Parent = gui
 
-UIS.InputBegan:Connect(function(i,gp)
-	if gp then return end
-	if i.KeyCode == Enum.KeyCode.X then
-		task.delay(KEY_DELAY, function() doPulse() end)
+-- eat every input
+blocker.InputBegan:Connect(function() end)
+blocker.InputEnded:Connect(function() end)
+
+-- sink most key/mouse actions at high priority
+local keys = {
+	Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
+	Enum.KeyCode.Space, Enum.KeyCode.Tab, Enum.KeyCode.Backspace,
+	Enum.KeyCode.Return, Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three,
+	Enum.KeyCode.Four, Enum.KeyCode.Five, Enum.KeyCode.Six, Enum.KeyCode.Seven,
+	Enum.KeyCode.Eight, Enum.KeyCode.Nine, Enum.KeyCode.Zero,
+	Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.R, Enum.KeyCode.F,
+	Enum.KeyCode.LeftShift, Enum.KeyCode.LeftControl, Enum.KeyCode.LeftAlt,
+	Enum.KeyCode.RightShift, Enum.KeyCode.RightControl,
+	Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonB, Enum.KeyCode.ButtonX, Enum.KeyCode.ButtonY,
+	Enum.KeyCode.ButtonL1, Enum.KeyCode.ButtonR1, Enum.KeyCode.ButtonStart,
+	Enum.UserInputType.MouseButton1, Enum.UserInputType.MouseButton2,
+	Enum.UserInputType.MouseButton3, Enum.UserInputType.MouseWheel
+}
+
+ContextActionService:BindActionAtPriority(
+	"CHOCOLockSink",
+	function(_, state)
+		if state == Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Sink
+	end,
+	false,
+	math.huge,
+	table.unpack(keys)
+)
+
+-- hide as much core UI as Roblox allows (chat/backpack/etc.)
+local function hideCore()
+	local ok, err = pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.EmotesMenu, false)
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+	end)
+	return ok, err
+end
+hideCore()
+
+-- disable reset button if possible
+pcall(function()
+	StarterGui:SetCore("ResetButtonCallback", false)
+end)
+
+-- constantly lock the mouse to center and keep focus on our blocker
+local runConn = RunService.RenderStepped:Connect(function()
+	UserInputService.MouseIconEnabled = false
+	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	GuiService.SelectedObject = blocker -- trap gamepad selection on our GUI
+	-- if someone tries to delete, re-parent
+	if not gui.Parent then
+		pcall(function() gui.Parent = CoreGui end)
+		if not gui.Parent then gui.Parent = LP:FindFirstChild("PlayerGui") or LP:WaitForChild("PlayerGui") end
 	end
 end)
+
+-- animated gradient sweep
+local rot = 0
+RunService.Heartbeat:Connect(function(dt)
+	rot = (rot + dt * 35) % 360
+	grad.Rotation = rot
+end)
+
+-- optional panic key for YOU (RightAlt) to clean up
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.RightAlt then
+		pcall(function() ContextActionService:UnbindAction("CHOCOLockSink") end)
+		pcall(function() runConn:Disconnect() end)
+		pcall(function() if bounceConn then bounceConn:Disconnect() end end)
+		gui:Destroy()
+		-- re-enable core UI (best effort)
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true)
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.EmotesMenu, true)
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, true)
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, true)
+			StarterGui:SetCore("ResetButtonCallback", true)
+		end)
+	end
+end)
+
+-- keep on top if the place respawns you
+LP.CharacterAdded:Connect(function()
+	task.wait(0.2)
+	pcall(function() gui.Parent = CoreGui end)
+	if not gui.Parent then
+		gui.Parent = LP:FindFirstChild("PlayerGui") or LP:WaitForChild("PlayerGui")
+	end
+end)
+
+-- done: fullscreen lock is active
