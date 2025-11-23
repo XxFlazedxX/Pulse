@@ -1,447 +1,1904 @@
-local player = game.Players.LocalPlayer
-local runService = game:GetService("RunService")
-local userInputService = game:GetService("UserInputService")
+-- AutoGrapple + Redesigned iOS26 Liquid Glass GUI (UPDATED)
 
--- GUI
-local gui = Instance.new("ScreenGui")
-gui.Name = "FlazedMenu"
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
+-- Place as a LocalScript (Parent = StarterPlayerScripts or a ScreenGui already in PlayerGui)
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 250, 0, 150)
-frame.Position = UDim2.new(0, 30, 0, 150)
-frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-frame.Active = true
-frame.Draggable = true
-frame.BorderSizePixel = 0
-frame.Parent = gui
+-- Features: Anti Grapple Toggle, Deselect Players Button, compact rounded iOS26 liquid glass theme
 
--- Label
-local label = Instance.new("TextLabel")
-label.Size = UDim2.new(1, 0, 0, 20)
-label.Position = UDim2.new(0, 0, 0, 0)
-label.BackgroundTransparency = 1
-label.Text = "˜”*°•.˜”*°• Made By Flazed •°*”˜.•°*”˜"
-label.TextColor3 = Color3.fromRGB(255, 255, 255)
-label.Font = Enum.Font.Gotham
-label.TextSize = 12
-label.Parent = frame
+-- Added: top small yellow (hide) and red (destroy) buttons + draggable "Show GUI" handle
 
--- Open/Close GUI Button
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0, 20, 0, 20)
-toggleBtn.Position = UDim2.new(1, 5, 0, 0)
-toggleBtn.AnchorPoint = Vector2.new(0, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-toggleBtn.Text = "-"
-toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-toggleBtn.Font = Enum.Font.Gotham
-toggleBtn.TextSize = 14
-toggleBtn.BorderSizePixel = 0
-toggleBtn.Parent = frame
+-- Updated: Auto TP chooses nearest selected alive player (if multiple selected) and falls back to typed name
 
-local isOpen = true
-local function toggleGUI()
-	isOpen = not isOpen
-	for _, child in pairs(frame:GetChildren()) do
-		if child ~= toggleBtn then
-			child.Visible = isOpen
-		end
-	end
-	toggleBtn.Text = isOpen and "-" or "+"
+local Players           = game:GetService("Players")
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local RunService        = game:GetService("RunService")
+
+local UserInputService  = game:GetService("UserInputService")
+
+local StarterGui        = game:GetService("StarterGui")
+
+local Workspace         = game:GetService("Workspace")
+
+local localPlayer = Players.LocalPlayer
+
+local playerGui   = localPlayer:WaitForChild("PlayerGui")
+
+-- === Visual / Theme values (Black + Dark Blue Transparent) ===
+
+local GLASS_BG = Color3.fromRGB(15, 15, 18)        -- dark black-ish
+local GLASS_ACCENT = Color3.fromRGB(20, 40, 80)    -- dark navy blue stroke
+local GLASS_TINT = Color3.fromRGB(10, 12, 16)      -- deep black tint
+local TEXT_DARK = Color3.fromRGB(255, 255, 255)    -- white text
+local HIGHLIGHT = Color3.fromRGB(0, 110, 255)       -- bright dark-blue for selected players
+
+
+-- === State ===
+
+local TARGET_USERNAME = "UserName"
+
+local autoGrapplerEnabled = false
+
+local clickConnectorEnabled = false
+
+local smartPredEnabled = false
+
+local jumpPredEnabled = false
+
+local autoTPEnabled = false
+
+local lastInfo = {}
+
+local selectedPlayers = {} -- keys = player.Name -> true
+
+-- Anti-grapple state
+
+local antiGrappleEnabled = false
+
+local hookHitboxes = {}
+
+local antiGrappleConnection = nil
+
+-- Tunables (kept from your previous script)
+
+local JUMP_VEL_THRESHOLD = 6
+
+local STAIRS_MIN_Y = 0.5
+
+local DIR_CHANGE_THRESHOLD = 6
+
+local JUMP_EXTRA_LEAD = 0.25
+
+local RE_SHOOT_MAX_AGE = 1.5
+
+local STAIRS_MIN_MOVE_DIR = 0.25
+
+local REPEAT_LAST_FIRE_PERCENT = 20
+
+local REPEAT_MIN_LAST_FIRE_AGE = 0.08
+
+local USE_CURRENT_POS_PERCENT = 20
+
+-- === Helpers ===
+
+local function sendNotification(title, text, duration)
+
+    duration = duration or 3
+
+    pcall(function()
+
+        StarterGui:SetCore("SendNotification", {
+
+            Title = title or "Notification",
+
+            Text = text or "",
+
+            Duration = duration,
+
+        })
+
+    end)
+
 end
 
-toggleBtn.MouseButton1Click:Connect(toggleGUI)
+-- === Create GUI (compact, rounded, liquid glass) ===
 
+local screenGui = Instance.new("ScreenGui")
 
+screenGui.Name = "AutoGrappleGui_Liquid"
 
--- Pull/Throw Button
-local pulling = false
-local pulledOnce = false
-local macroBtn = Instance.new("TextButton")
-macroBtn.Position = UDim2.new(0.05, 0, 0, 30)
-macroBtn.Text = "Throw: OFF"
-macroBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-macroBtn.TextColor3 = Color3.new(1, 1, 1)
-macroBtn.Font = Enum.Font.Gotham
-macroBtn.BorderSizePixel = 0
-macroBtn.Parent = frame
+screenGui.ResetOnSpawn = false
 
-macroBtn.MouseButton1Click:Connect(function()
-	pulling = not pulling
-	pulledOnce = pulling or pulledOnce
-	macroBtn.Text = pulling and "Pull: ON" or "Throw: OFF"
+screenGui.IgnoreGuiInset = true
+
+screenGui.Parent = playerGui
+
+local mainFrame = Instance.new("Frame")
+
+mainFrame.Name = "MainFrame"
+
+mainFrame.Size = UDim2.new(0, 300, 0, 420)
+
+mainFrame.Position = UDim2.new(0.5, -150, 0.5, -210)
+
+mainFrame.BackgroundColor3 = GLASS_BG
+
+mainFrame.BackgroundTransparency = 0.12
+
+mainFrame.BorderSizePixel = 0
+
+mainFrame.ClipsDescendants = true
+
+mainFrame.Parent = screenGui
+
+-- rounded and frosted look
+
+local corner = Instance.new("UICorner", mainFrame)
+
+corner.CornerRadius = UDim.new(0, 18)
+
+local stroke = Instance.new("UIStroke", mainFrame)
+
+stroke.Color = GLASS_ACCENT
+
+stroke.Transparency = 0.6
+
+stroke.Thickness = 1
+
+local gradient = Instance.new("UIGradient", mainFrame)
+
+gradient.Color = ColorSequence.new{
+
+    ColorSequenceKeypoint.new(0, GLASS_TINT),
+
+    ColorSequenceKeypoint.new(1, GLASS_BG)
+
+}
+
+gradient.Rotation = 90
+
+gradient.Transparency = NumberSequence.new(0.55)
+
+-- Title bar
+
+local titleBar = Instance.new("Frame", mainFrame)
+
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+
+titleBar.Position = UDim2.new(0, 0, 0, 0)
+
+titleBar.BackgroundTransparency = 1
+
+local titleLabel = Instance.new("TextLabel", titleBar)
+
+titleLabel.Size = UDim2.new(1, -120, 1, 0)
+
+titleLabel.Position = UDim2.new(0, 16, 0, 0)
+
+titleLabel.BackgroundTransparency = 1
+
+titleLabel.Text = "Auto Grappler"
+
+titleLabel.TextColor3 = TEXT_DARK
+
+titleLabel.Font = Enum.Font.GothamBold
+
+titleLabel.TextSize = 16
+
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- small drag logic for mainFrame
+
+local dragging, dragStart, startPos = false, nil, nil
+
+mainFrame.InputBegan:Connect(function(input)
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging, dragStart, startPos = true, input.Position, mainFrame.Position
+
+        input.Changed:Connect(function()
+
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+
+        end)
+
+    end
+
 end)
 
--- Get rope
-local function getRope()
-	local ropesFolder = workspace:FindFirstChild("Ropes")
-	if not ropesFolder then return nil end
-	local userRope = ropesFolder:FindFirstChild(player.Name)
-	if not userRope then return nil end
-	return userRope:FindFirstChild("mainConnectionRope")
+UserInputService.InputChanged:Connect(function(input)
+
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+
+        local delta = input.Position - dragStart
+
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+
+    end
+
+end)
+
+-- helper to make small circular colored buttons in titlebar
+
+local function makeTinyCircle(name, parent, color, posOffsetX)
+
+    local c = Instance.new("TextButton", parent)
+
+    c.Name = name
+
+    c.Size = UDim2.new(0, 14, 0, 14)
+
+    c.Position = UDim2.new(1, -posOffsetX, 0, 13) -- anchored to the right
+
+    c.BackgroundColor3 = color
+
+    c.Text = ""
+
+    c.BorderSizePixel = 0
+
+    local cc = Instance.new("UICorner", c); cc.CornerRadius = UDim.new(1, 0)
+
+    local st = Instance.new("UIStroke", c); st.Color = Color3.new(0,0,0); st.Transparency = 0.88; st.Thickness = 1
+
+    return c
+
 end
 
--- EaseIn
-local isEaseInActive = false
-local speed = 27
+-- Create two small top buttons (yellow = hide GUI, red = destroy GUI)
 
-local easeInBtn = Instance.new("TextButton")
-easeInBtn.Position = UDim2.new(0.05, 0, 0, 70)
-easeInBtn.Text = "EaseIn: OFF"
-easeInBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-easeInBtn.TextColor3 = Color3.new(1, 1, 1)
-easeInBtn.Font = Enum.Font.Gotham
-easeInBtn.BorderSizePixel = 0
-easeInBtn.Parent = frame
+local topYellowBtn = makeTinyCircle("HideGuiButton", titleBar, Color3.fromRGB(255, 220, 60), 60) -- left of the pair
 
-easeInBtn.MouseButton1Click:Connect(function()
-	isEaseInActive = not isEaseInActive
-	easeInBtn.Text = isEaseInActive and "EaseIn: ON" or "EaseIn: OFF"
-	local rope = getRope()
-	if rope and isEaseInActive then
-		rope.Length = 50
-	end
-end)
+local topRedBtn    = makeTinyCircle("DestroyGuiButton", titleBar, Color3.fromRGB(235, 80, 80), 36) -- right of the pair
 
--- Kill Button
-local killBtn = Instance.new("TextButton")
-killBtn.Position = UDim2.new(0.2, 0, 0, 110)
-killBtn.Text = "Kill: OFF"
-killBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-killBtn.TextColor3 = Color3.new(1, 1, 1)
-killBtn.Font = Enum.Font.Gotham
-killBtn.BorderSizePixel = 0
-killBtn.Parent = frame
+-- === Controls layout ===
 
-local killing = false
-killBtn.MouseButton1Click:Connect(function()
-	killing = not killing
-	killBtn.Text = killing and "Kill: ON" or "Kill: OFF"
+local function mkButton(name, parent, props)
 
-	local dmg = workspace:FindFirstChild("Pit") and workspace.Pit:FindFirstChild("Damage")
-	if dmg then
-		dmg.Size = killing and Vector3.new(2e8, 2e8, 2e8) or Vector3.new(0, 0, 0)
-	end
+    local b = Instance.new("TextButton", parent)
 
-	for _, v in pairs(player.Character:GetDescendants()) do
-		if v:IsA("BasePart") then
-			v.CanTouch = not killing
-			v.CanCollide = not killing
-		end
-	end
-end)
+    b.Name = name
 
--- Remove Resize Button if it exists
-if frame:FindFirstChild("Resize") then
-	frame.Resize:Destroy()
+    b.AutoButtonColor = true
+
+    b.Font = Enum.Font.Gotham
+
+    b.TextSize = props.textSize or 13
+
+    b.TextColor3 = TEXT_DARK
+
+    b.BackgroundTransparency = 0.08
+
+    b.BackgroundColor3 = GLASS_TINT
+
+    b.Size = props.size or UDim2.new(0, 130, 0, 32)
+
+    b.Position = props.pos or UDim2.new(0, 0, 0, 0)
+
+    b.Text = props.text or ""
+
+    b.BorderSizePixel = 0
+
+    local uic = Instance.new("UICorner", b); uic.CornerRadius = UDim.new(0, 12)
+
+    local st = Instance.new("UIStroke", b); st.Color = GLASS_ACCENT; st.Transparency = 0.7; st.Thickness = 1
+
+    return b
+
 end
 
--- Resize Handle
-local resize = Instance.new("TextButton")
-resize.Size = UDim2.new(0, 16, 0, 16)
-resize.Position = UDim2.new(1, -4, 1, -4)
-resize.AnchorPoint = Vector2.new(1, 1)
-resize.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
-resize.Text = ""
-resize.BorderSizePixel = 0
-resize.Parent = frame
+-- First row: Auto Grappler / Click Connector (small)
 
--- Resize Logic
-local resizing = false
-local startSize, startPos
-resize.MouseButton1Down:Connect(function()
-	resizing = true
-	startSize = frame.AbsoluteSize
-	startPos = Vector2.new(player:GetMouse().X, player:GetMouse().Y)
-	frame.Draggable = false
-end)
+local autoGrappleButton = mkButton("AutoGrappleButton", mainFrame, {
 
-userInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		resizing = false
-		frame.Draggable = true
-	end
-end)
+    pos = UDim2.new(0, 12, 0, 52),
 
--- Base size reference
-local baseSize = Vector2.new(250, 150)
-local function updateScale()
-	local scaleX = frame.AbsoluteSize.X / baseSize.X
-	local scaleY = frame.AbsoluteSize.Y / baseSize.Y
-	local scale = math.min(scaleX, scaleY)
+    size = UDim2.new(0, 130, 0, 34),
 
-	macroBtn.TextSize = 15 * scale
-	easeInBtn.TextSize = 15 * scale
-	killBtn.TextSize = 13 * scale
-	label.TextSize = 12 * scale
+    text = "Auto Grappler: OFF"
 
-	macroBtn.Size = UDim2.new(0.9, 0, 0, 30 * scale)
-	easeInBtn.Size = UDim2.new(0.9, 0, 0, 30 * scale)
-	killBtn.Size = UDim2.new(0.6, 0, 0, 25 * scale)
+})
+
+local clickConnectButton = mkButton("ClickConnectButton", mainFrame, {
+
+    pos = UDim2.new(0, 156, 0, 52),
+
+    size = UDim2.new(0, 130, 0, 34),
+
+    text = "Click Connector: OFF"
+
+})
+
+-- Second row: SmartPred / JumpPred
+
+local smartPredButton = mkButton("SmartPredButton", mainFrame, {
+
+    pos = UDim2.new(0, 12, 0, 98),
+
+    text = "SmartPred: OFF",
+
+    size = UDim2.new(0, 130, 0, 30),
+
+    textSize = 12
+
+})
+
+local jumpPredButton = mkButton("JumpPredButton", mainFrame, {
+
+    pos = UDim2.new(0, 156, 0, 98),
+
+    text = "JumpPred: OFF",
+
+    size = UDim2.new(0, 130, 0, 30),
+
+    textSize = 12
+
+})
+
+-- Third row: AutoTP / AntiGrapple Toggle (NEW)
+
+local autoTPButton = mkButton("AutoTPButton", mainFrame, {
+
+    pos = UDim2.new(0, 12, 0, 138),
+
+    text = "Auto TP: OFF",
+
+    size = UDim2.new(0, 130, 0, 30),
+
+    textSize = 12
+
+})
+
+local antiGrappleToggle = mkButton("AntiGrappleToggle", mainFrame, {
+
+    pos = UDim2.new(0, 156, 0, 138),
+
+    text = "Anti Grapple: OFF",
+
+    size = UDim2.new(0, 130, 0, 30),
+
+    textSize = 12
+
+})
+
+-- Target textbox + prediction time (compact)
+
+local targetTextBox = Instance.new("TextBox", mainFrame)
+
+targetTextBox.Name = "TargetTextBox"
+
+targetTextBox.Size = UDim2.new(1, -24, 0, 28)
+
+targetTextBox.Position = UDim2.new(0, 12, 0, 184)
+
+targetTextBox.BackgroundColor3 = GLASS_TINT
+
+targetTextBox.BackgroundTransparency = 0.06
+
+targetTextBox.TextColor3 = TEXT_DARK
+
+targetTextBox.PlaceholderText = "Target username or click players"
+
+targetTextBox.Text = TARGET_USERNAME
+
+targetTextBox.Font = Enum.Font.Gotham
+
+targetTextBox.TextSize = 13
+
+local tbCorner = Instance.new("UICorner", targetTextBox); tbCorner.CornerRadius = UDim.new(0,10)
+
+local tbStroke = Instance.new("UIStroke", targetTextBox); tbStroke.Color = GLASS_ACCENT; tbStroke.Transparency = 0.7
+
+local predTextBox = Instance.new("TextBox", mainFrame)
+
+predTextBox.Name = "PredictionTimeBox"
+
+predTextBox.Size = UDim2.new(0, 110, 0, 26)
+
+predTextBox.Position = UDim2.new(0, 12, 0, 218)
+
+predTextBox.BackgroundColor3 = GLASS_TINT
+
+predTextBox.BackgroundTransparency = 0.06
+
+predTextBox.TextColor3 = TEXT_DARK
+
+predTextBox.PlaceholderText = "Pred time (s)"
+
+predTextBox.Text = "0.5"
+
+predTextBox.Font = Enum.Font.Gotham
+
+predTextBox.TextSize = 12
+
+local predCorner = Instance.new("UICorner", predTextBox); predCorner.CornerRadius = UDim.new(0,8)
+
+-- Random Select, Deselect (NEW)
+
+local randomSelectButton = mkButton("RandomSelectButton", mainFrame, {
+
+    pos = UDim2.new(0, 136, 0, 216),
+
+    size = UDim2.new(0, 84, 0, 26),
+
+    text = "Random"
+
+})
+
+local deselectButton = mkButton("DeselectButton", mainFrame, {
+
+    pos = UDim2.new(0, 232, 0, 216),
+
+    size = UDim2.new(0, 56, 0, 26),
+
+    text = "Clear"
+
+})
+
+-- Player list (compact)
+
+local playerListFrame = Instance.new("ScrollingFrame", mainFrame)
+
+playerListFrame.Name = "PlayerListFrame"
+
+playerListFrame.Size = UDim2.new(1, -24, 0, 156)
+
+playerListFrame.Position = UDim2.new(0, 12, 0, 254)
+
+playerListFrame.BackgroundTransparency = 0.1
+
+playerListFrame.BackgroundColor3 = GLASS_TINT
+
+playerListFrame.BorderSizePixel = 0
+
+playerListFrame.CanvasSize = UDim2.new(0,0,0,0)
+
+playerListFrame.ScrollBarThickness = 6
+
+local uicorner_list = Instance.new("UICorner", playerListFrame); uicorner_list.CornerRadius = UDim.new(0,10)
+
+local listLayout = Instance.new("UIListLayout", playerListFrame)
+
+listLayout.Padding = UDim.new(0,6)
+
+listLayout.SortOrder = Enum.SortOrder.Name
+
+-- === Show GUI handle (created when user hides via yellow button) ===
+
+local showHandleScreenGui = nil -- will be created on first hide
+
+local showHandleBtn = nil
+
+local function createShowHandle()
+
+    if showHandleScreenGui and showHandleScreenGui.Parent then return end
+
+    showHandleScreenGui = Instance.new("ScreenGui")
+
+    showHandleScreenGui.Name = "AutoGrapple_ShowHandle"
+
+    showHandleScreenGui.ResetOnSpawn = false
+
+    showHandleScreenGui.IgnoreGuiInset = true
+
+    showHandleScreenGui.Parent = playerGui
+
+    showHandleBtn = Instance.new("TextButton", showHandleScreenGui)
+
+    showHandleBtn.Name = "ShowHandle"
+
+    showHandleBtn.Size = UDim2.new(0, 48, 0, 48)
+
+    showHandleBtn.Position = UDim2.new(0, 12, 0, 80)
+
+    showHandleBtn.AnchorPoint = Vector2.new(0,0)
+
+    showHandleBtn.BackgroundColor3 = Color3.fromRGB(245,245,245)
+
+    showHandleBtn.BackgroundTransparency = 0.06
+
+    showHandleBtn.Text = "Show GUI"
+
+    showHandleBtn.TextColor3 = TEXT_DARK
+
+    showHandleBtn.Font = Enum.Font.Gotham
+
+    showHandleBtn.TextSize = 12
+
+    local ch = Instance.new("UICorner", showHandleBtn); ch.CornerRadius = UDim.new(1, 0)
+
+    local st = Instance.new("UIStroke", showHandleBtn); st.Color = GLASS_ACCENT; st.Transparency = 0.7
+
+    -- draggable small circle logic
+
+    local draggingHandle, dragStartHandle, startPosHandle = false, nil, nil
+
+    showHandleBtn.InputBegan:Connect(function(input)
+
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+
+            draggingHandle, dragStartHandle, startPosHandle = true, input.Position, showHandleBtn.Position
+
+            input.Changed:Connect(function()
+
+                if input.UserInputState == Enum.UserInputState.End then draggingHandle = false end
+
+            end)
+
+        end
+
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+
+        if draggingHandle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+
+            local delta = input.Position - dragStartHandle
+
+            showHandleBtn.Position = UDim2.new(startPosHandle.X.Scale, startPosHandle.X.Offset + delta.X, startPosHandle.Y.Scale, startPosHandle.Y.Offset + delta.Y)
+
+        end
+
+    end)
+
+    showHandleBtn.MouseButton1Click:Connect(function()
+
+        if mainFrame and mainFrame.Parent then
+
+            mainFrame.Visible = true
+
+        end
+
+        -- remove the handle GUI
+
+        if showHandleScreenGui and showHandleScreenGui.Parent then
+
+            pcall(function() showHandleScreenGui:Destroy() end)
+
+            showHandleScreenGui = nil
+
+            showHandleBtn = nil
+
+        end
+
+    end)
+
 end
 
--- Main Loop
-runService.RenderStepped:Connect(function(dt)
-	local rope = getRope()
-	if rope then
-		if isEaseInActive then
-			rope.Length = math.max(rope.Length - speed * dt, 5)
-			if rope.Length <= 5 then
-				isEaseInActive = false
-				easeInBtn.Text = "EaseIn: OFF"
-			end
-		else
-			if pulling then
-				rope.Length = 5
-			elseif pulledOnce then
-				rope.Length = 1000000000000
-			end
-		end
-	end
+-- === Selection UI update / player list population ===
 
-	if resizing then
-		local delta = Vector2.new(player:GetMouse().X, player:GetMouse().Y) - startPos
-		frame.Size = UDim2.new(0, math.max(50, startSize.X + delta.X), 0, math.max(50, startSize.Y + delta.Y))
-		updateScale()
-	end
-end)
+local function updateSelectionUI()
 
--- FLY and RR Buttons (Shift-lock Fly and Remove Ragdoll)
--- Fly Script with ShiftLock Movement and GUI Open/Close Toggle
+    for _, child in ipairs(playerListFrame:GetChildren()) do
 
-local player = game.Players.LocalPlayer
-local runService = game:GetService("RunService")
-local userInputService = game:GetService("UserInputService")
+        if child:IsA("TextButton") then
 
-local gui = player.PlayerGui:WaitForChild("FlazedMenu")
-local frame = gui:WaitForChild("Frame")
+            if selectedPlayers[child.Name] then
 
--- Fly Button
-local flyBtn = Instance.new("TextButton")
-flyBtn.Size = UDim2.new(0, 31, 0, 29)
-flyBtn.Position = UDim2.new(0, 0, 0.807, 0)
-flyBtn.Text = "Fly"
-flyBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-flyBtn.TextColor3 = Color3.new(1, 1, 1)
-flyBtn.Font = Enum.Font.Gotham
-flyBtn.TextSize = 10
-flyBtn.BorderSizePixel = 0
-flyBtn.Parent = frame
+                child.BackgroundColor3 = HIGHLIGHT
 
-local flyEnabled = false
-local bodyGyro, bodyVel
+                child.TextColor3 = Color3.fromRGB(255,255,255)
 
-local function startFly()
-	local character = player.Character
-	if not character then return end
-	local hrp = character:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
+            else
 
-	bodyGyro = Instance.new("BodyGyro")
-	bodyGyro.P = 9e4
-	bodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-	bodyGyro.CFrame = hrp.CFrame
-	bodyGyro.Parent = hrp
+                child.BackgroundColor3 = GLASS_TINT
 
-	bodyVel = Instance.new("BodyVelocity")
-	bodyVel.Velocity = Vector3.zero
-	bodyVel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-	bodyVel.Parent = hrp
+                child.TextColor3 = TEXT_DARK
 
-	game:GetService("StarterGui"):SetCore("ToggleMouseLock", true)
+            end
+
+        end
+
+    end
+
+    -- update target textbox if 1 selected or show count
+
+    local count = 0; local lastName = nil
+
+    for name, _ in pairs(selectedPlayers) do count = count + 1; lastName = name end
+
+    if count == 1 and lastName then
+
+        targetTextBox.Text = lastName
+
+    elseif count > 1 then
+
+        targetTextBox.Text = tostring(count) .. " selected"
+
+    end
+
+    -- (if count == 0 we don't forcibly overwrite the textbox here because
+
+    -- manual deselect/clear handlers explicitly clear it when appropriate)
+
 end
 
-local function stopFly()
-	if bodyGyro then bodyGyro:Destroy() end
-	if bodyVel then bodyVel:Destroy() end
-	game:GetService("StarterGui"):SetCore("ToggleMouseLock", false)
+local function updatePlayerList()
+
+    for _, child in ipairs(playerListFrame:GetChildren()) do
+
+        if child:IsA("TextButton") then child:Destroy() end
+
+    end
+
+    local players = Players:GetPlayers()
+
+    local canvasH = 0
+
+    for _, pl in ipairs(players) do
+
+        local btn = Instance.new("TextButton")
+
+        btn.Name = pl.Name
+
+        btn.Size = UDim2.new(1, -12, 0, 26)
+
+        btn.BackgroundColor3 = GLASS_TINT
+
+        btn.BackgroundTransparency = 0.06
+
+        btn.TextColor3 = TEXT_DARK
+
+        btn.Text = pl.DisplayName
+
+        btn.Font = Enum.Font.Gotham
+
+        btn.TextSize = 12
+
+        btn.TextXAlignment = Enum.TextXAlignment.Left
+
+        btn.Position = UDim2.new(0, 6, 0, 0)
+
+        btn.Parent = playerListFrame
+
+        local c = Instance.new("UICorner", btn); c.CornerRadius = UDim.new(0,8)
+
+        local s = Instance.new("UIStroke", btn); s.Transparency = 0.7; s.Color = GLASS_ACCENT
+
+        if selectedPlayers[pl.Name] then
+
+            btn.BackgroundColor3 = HIGHLIGHT
+
+            btn.TextColor3 = Color3.fromRGB(255,255,255)
+
+        end
+
+        btn.MouseButton1Click:Connect(function()
+
+            if selectedPlayers[pl.Name] then
+
+                -- user manually deselected this player: remove selection
+
+                selectedPlayers[pl.Name] = nil
+
+                -- clear textbox if it currently shows that player's name
+
+                if targetTextBox and targetTextBox.Text and targetTextBox.Text == pl.Name then
+
+                    targetTextBox.Text = ""
+
+                end
+
+                sendNotification("AutoGrapple","Deselected: "..pl.Name,1.5)
+
+            else
+
+                selectedPlayers[pl.Name] = true
+
+                sendNotification("AutoGrapple","Selected: "..pl.Name,1.5)
+
+            end
+
+            updateSelectionUI()
+
+        end)
+
+        canvasH = canvasH + 26 + listLayout.Padding.Offset
+
+    end
+
+    playerListFrame.CanvasSize = UDim2.new(0,0,0, canvasH)
+
+    updateSelectionUI()
+
 end
 
-flyBtn.MouseButton1Click:Connect(function()
-	flyEnabled = not flyEnabled
-	if flyEnabled then
-		startFly()
-	else
-		stopFly()
-	end
+Players.PlayerAdded:Connect(updatePlayerList)
+
+Players.PlayerRemoving:Connect(function(pl)
+
+    -- FIX: keep selection when a player leaves so their name remains in the TextBox.
+
+    -- We intentionally do NOT remove selectedPlayers[pl.Name] here. When they rejoin,
+
+    -- updatePlayerList will recreate their entry and it will be highlighted.
+
+    updatePlayerList()
+
+    sendNotification("AutoGrapple","Player left: "..pl.Name.." — selection preserved.", 1.2)
+
 end)
 
-runService.RenderStepped:Connect(function()
-	if flyEnabled then
-		local cam = workspace.CurrentCamera
-		local direction = Vector3.zero
+updatePlayerList()
 
-		if userInputService:IsKeyDown(Enum.KeyCode.W) then direction += cam.CFrame.LookVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.S) then direction -= cam.CFrame.LookVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.A) then direction -= cam.CFrame.RightVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.D) then direction += cam.CFrame.RightVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.Space) then direction += cam.CFrame.UpVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= cam.CFrame.UpVector end
+-- === Find bindable mouseClick in ReplicatedStorage ===
 
-		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if hrp and bodyGyro and bodyVel then
-			bodyGyro.CFrame = cam.CFrame
-			bodyVel.Velocity = direction.Unit * 70
-		end
-	end
-end)
+local function findMouseClickBindable()
 
--- Toggle GUI Button
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0, 20, 0, 20)
-toggleBtn.Position = UDim2.new(1, 5, 0, 0)
-toggleBtn.AnchorPoint = Vector2.new(0, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-toggleBtn.Text = "-"
-toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-toggleBtn.Font = Enum.Font.Gotham
-toggleBtn.TextSize = 14
-toggleBtn.BorderSizePixel = 0
-toggleBtn.Parent = frame
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
 
-local isOpen = true
-local function toggleGUI()
-	isOpen = not isOpen
-	frame.Visible = isOpen
-	toggleBtn.Text = isOpen and "-" or "+"
-	toggleBtn.Parent = isOpen and frame or gui
+        if obj.Name == "mouseClick" and obj:IsA("BindableEvent") then
+
+            return obj
+
+        end
+
+    end
+
+    return nil
+
 end
 
-toggleBtn.MouseButton1Click:Connect(toggleGUI)
--- Fly Button
-local flyBtn = Instance.new("TextButton")
-flyBtn.Size = UDim2.new(0, 31, 0, 29)
-flyBtn.Position = UDim2.new(0, 0, 0.807, 0)
-flyBtn.Text = "Fly"
-flyBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-flyBtn.TextColor3 = Color3.new(1, 1, 1)
-flyBtn.Font = Enum.Font.Gotham
-flyBtn.TextSize = 10
-flyBtn.BorderSizePixel = 0
-flyBtn.Parent = frame
+-- === Track velocities / humanoid states ===
 
-local flying = false
-local function fly()
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
+RunService.Heartbeat:Connect(function(dt)
 
-	local bv = Instance.new("BodyVelocity", hrp)
-	bv.Velocity = Vector3.new(0, 0, 0)
-	bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-	bv.Name = "FlyVelocity"
+    if not dt or dt <= 0 then return end
 
-	local flyingConn
-	flyingConn = runService.RenderStepped:Connect(function()
-		if not flying or not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
-			bv:Destroy()
-			flyingConn:Disconnect()
-			return
-		end
+    for _, pl in ipairs(Players:GetPlayers()) do
 
-		local direction = Vector3.zero
-		if userInputService:IsKeyDown(Enum.KeyCode.W) then direction += workspace.CurrentCamera.CFrame.LookVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.S) then direction -= workspace.CurrentCamera.CFrame.LookVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.A) then direction -= workspace.CurrentCamera.CFrame.RightVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.D) then direction += workspace.CurrentCamera.CFrame.RightVector end
-		if userInputService:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.new(0, 1, 0) end
-		if userInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.new(0, 1, 0) end
+        local char = pl.Character
 
-		bv.Velocity = direction.Unit * 70
-	end)
+        if char and char.PrimaryPart then
+
+            local info = lastInfo[pl.Name] or {}
+
+            info.lastVel = info.vel
+
+            info.prevPos = info.lastPos or char.PrimaryPart.Position
+
+            info.lastPos = char.PrimaryPart.Position
+
+            if info.prevPos and info.lastPos and dt and dt > 0 then
+
+                info.dt = dt
+
+                info.vel = (info.lastPos - info.prevPos) / dt
+
+            else
+
+                info.vel = Vector3.new(0,0,0)
+
+                info.dt = dt
+
+            end
+
+            local humanoid = char:FindFirstChildOfClass("Humanoid")
+
+            if humanoid then
+
+                info.humState = humanoid:GetState()
+
+                info.moveDir = humanoid.MoveDirection or Vector3.new(0,0,0)
+
+                info.onGround = humanoid.FloorMaterial ~= Enum.Material.Air
+
+            else
+
+                info.humState = nil
+
+                info.moveDir = Vector3.new(0,0,0)
+
+                info.onGround = false
+
+            end
+
+            info.lastUpdate = tick()
+
+            lastInfo[pl.Name] = info
+
+        end
+
+    end
+
+end)
+
+-- === Auto Grappler core (robust) ===
+
+local mouseClickConn, grappleRemote, grappleToolRef
+
+local function findGrappleTool()
+
+    if localPlayer.Character then
+
+        local t = localPlayer.Character:FindFirstChild("Grapple")
+
+        if t then return t end
+
+    end
+
+    return localPlayer.Backpack and localPlayer.Backpack:FindFirstChild("Grapple")
+
 end
 
-flyBtn.MouseButton1Click:Connect(function()
-	flying = not flying
-	if flying then
-		fly()
-	else
-		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if hrp and hrp:FindFirstChild("FlyVelocity") then
-			hrp.FlyVelocity:Destroy()
-		end
-	end
-end)
+local function tryFindAndDisableMainScript(tool)
 
--- Toggle Button (Close/Open GUI)
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0, 20, 0, 20)
-toggleBtn.Position = UDim2.new(1, 5, 0, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-toggleBtn.Text = "-"
-toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-toggleBtn.Font = Enum.Font.Gotham
-toggleBtn.TextSize = 14
-toggleBtn.BorderSizePixel = 0
-toggleBtn.Parent = frame
+    if not tool then return end
 
-local minimized = false
-toggleBtn.MouseButton1Click:Connect(function()
-	minimized = not minimized
-	frame.Visible = not minimized
+    local mainScript = tool:FindFirstChild("Main")
 
-	if minimized then
-		local plusBtn = Instance.new("TextButton")
-		plusBtn.Size = UDim2.new(0, 20, 0, 20)
-		plusBtn.Position = UDim2.new(0, 30, 0, 150)
-		plusBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-		plusBtn.Text = "+"
-		plusBtn.TextColor3 = Color3.new(1, 1, 1)
-		plusBtn.Font = Enum.Font.Gotham
-		plusBtn.TextSize = 14
-		plusBtn.BorderSizePixel = 0
-		plusBtn.Active = true
-		plusBtn.Draggable = true
-		plusBtn.Parent = gui
+    if mainScript and mainScript:IsA("Script") then
 
+        pcall(function() mainScript.Disabled = true end)
 
-		plusBtn.MouseButton1Click:Connect(function()
-			frame.Visible = true
-			minimized = false
-			plusBtn:Destroy()
-		end)
-	end
-end)
+    end
 
--- RR (Remove Ragdoll)
-local rrBtn = Instance.new("TextButton")
-rrBtn.Size = UDim2.new(0, 31, 0, 29)
-rrBtn.Position = UDim2.new(0.876, 0, 0.807, 0)
-rrBtn.Text = "RR"
-rrBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-rrBtn.TextColor3 = Color3.new(1, 1, 1)
-rrBtn.Font = Enum.Font.Gotham
-rrBtn.TextSize = 10
-rrBtn.BorderSizePixel = 0
-rrBtn.Parent = frame
-
-local function monitorRagdoll(character)
-	task.spawn(function()
-		while character and character.Parent do
-			local ragdoll = character:FindFirstChild("ragdollValue")
-			if ragdoll then
-				ragdoll:Destroy()
-			end
-			task.wait(0.1)
-		end
-	end)
 end
 
-rrBtn.MouseButton1Click:Connect(function()
-	local character = player.Character
-	if character then
-		monitorRagdoll(character)
-	end
-end)
+local function tryRestoreMainScript(tool)
 
-player.CharacterAdded:Connect(function(char)
-	monitorRagdoll(char)
-end)
-if player.Character then
-	monitorRagdoll(player.Character)
+    if not tool then return end
+
+    local mainScript = tool:FindFirstChild("Main")
+
+    if mainScript and mainScript:IsA("Script") then
+
+        pcall(function() mainScript.Disabled = false end)
+
+    end
+
 end
 
+local function disconnectMouseClickConn()
 
-updateScale()
+    if mouseClickConn then
+
+        pcall(function() mouseClickConn:Disconnect() end)
+
+        mouseClickConn = nil
+
+    end
+
+end
+
+local function getSelectedPlayerObjects()
+
+    local arr = {}
+
+    for name, _ in pairs(selectedPlayers) do
+
+        for _, pl in ipairs(Players:GetPlayers()) do
+
+            if pl.Name == name then
+
+                table.insert(arr, pl)
+
+                break
+
+            end
+
+        end
+
+    end
+
+    return arr
+
+end
+
+local function chooseTargetForFire()
+
+    local selArr = getSelectedPlayerObjects()
+
+    if #selArr >= 2 then
+
+        local myChar = localPlayer.Character
+
+        local myPos = myChar and myChar.PrimaryPart and myChar.PrimaryPart.Position
+
+        if not myPos then return selArr[1] end
+
+        local best, bestDist = nil, math.huge
+
+        for _, pl in ipairs(selArr) do
+
+            if pl.Character and pl.Character.PrimaryPart then
+
+                local hum = pl.Character:FindFirstChildOfClass("Humanoid")
+
+                if hum and hum.Health > 0 then
+
+                    local d = (pl.Character.PrimaryPart.Position - myPos).Magnitude
+
+                    if d < bestDist then best = pl; bestDist = d end
+
+                end
+
+            end
+
+        end
+
+        if best then return best end
+
+        return selArr[1]
+
+    end
+
+    if #selArr == 1 then return selArr[1] end
+
+    local name = targetTextBox.Text
+
+    if not name or name == "" then return nil end
+
+    if string.find(name, "selected") then return nil end
+
+    for _, pl in ipairs(Players:GetPlayers()) do
+
+        if pl.Name:lower() == name:lower() then return pl end
+
+    end
+
+    return nil
+
+end
+
+local function enableAutoGrappler()
+
+    if not localPlayer.Character or not localPlayer.Character.PrimaryPart then return false end
+
+    grappleToolRef = findGrappleTool()
+
+    if not grappleToolRef then
+
+        grappleToolRef = localPlayer.Character:FindFirstChild("Grapple") or localPlayer.Backpack:FindFirstChild("Grapple")
+
+        if not grappleToolRef then
+
+            warn("[AutoGrapple] Grapple tool not found (will retry on respawn/equip).")
+
+            return false
+
+        end
+
+    end
+
+    if grappleToolRef.Parent == localPlayer.Backpack and localPlayer.Character then
+
+        pcall(function() grappleToolRef.Parent = localPlayer.Character end)
+
+        task.wait(0.05)
+
+    end
+
+    -- find remote inside tool
+
+    local foundRemote = nil
+
+    for _, child in ipairs(grappleToolRef:GetDescendants()) do
+
+        if child:IsA("RemoteEvent") then
+
+            foundRemote = child
+
+            break
+
+        end
+
+    end
+
+    grappleRemote = foundRemote
+
+    tryFindAndDisableMainScript(grappleToolRef)
+
+    local eventBindable = findMouseClickBindable()
+
+    if not eventBindable then
+
+        warn("[AutoGrapple] mouseClick bindable not found")
+
+        return false
+
+    end
+
+    disconnectMouseClickConn()
+
+    mouseClickConn = eventBindable.Event:Connect(function()
+
+        if not autoGrapplerEnabled then return end
+
+        local tgt = chooseTargetForFire()
+
+        if not (tgt and tgt.Character and tgt.Character.PrimaryPart) then return end
+
+        local currentPos = tgt.Character.PrimaryPart.Position
+
+        local myChar = localPlayer.Character
+
+        if not (myChar and myChar.PrimaryPart) then return end
+
+        local dist = (myChar.PrimaryPart.Position - currentPos).Magnitude
+
+        local autoT = 0.1 + math.clamp(dist/100, 0, 1) * 0.9
+
+        predTextBox.Text = string.format("%.2f", autoT)
+
+        local pT = tonumber(predTextBox.Text) or autoT
+
+        local info = lastInfo[tgt.Name]
+
+        local firePos = currentPos
+
+        if info and info.lastPos and info.dt and info.dt > 0 then
+
+            local vel = info.vel or Vector3.new(0,0,0)
+
+            local pred = info.lastPos + vel * pT
+
+            if smartPredEnabled then
+
+                local lastFirePosCandidate = info.lastFirePos
+
+                local lastFireAge = tick() - (info.lastFireTick or 0)
+
+                if lastFirePosCandidate and lastFireAge >= REPEAT_MIN_LAST_FIRE_AGE then
+
+                    if math.random(100) <= REPEAT_LAST_FIRE_PERCENT then
+
+                        firePos = lastFirePosCandidate
+
+                    else
+
+                        firePos = nil
+
+                    end
+
+                else
+
+                    firePos = nil
+
+                end
+
+                if not firePos then
+
+                    local isTrueJump = false
+
+                    if info.humState == Enum.HumanoidStateType.Jumping then
+
+                        isTrueJump = true
+
+                    elseif vel and vel.Y and vel.Y > JUMP_VEL_THRESHOLD then
+
+                        isTrueJump = true
+
+                    end
+
+                    local isStairs = false
+
+                    if vel and vel.Y and vel.Y > STAIRS_MIN_Y and vel.Y <= JUMP_VEL_THRESHOLD then
+
+                        local md = info.moveDir or Vector3.new(0,0,0)
+
+                        if md.Magnitude >= STAIRS_MIN_MOVE_DIR and info.humState ~= Enum.HumanoidStateType.Jumping then
+
+                            isStairs = true
+
+                        end
+
+                    end
+
+                    if isTrueJump then
+
+                        pred = info.lastPos + vel * pT
+
+                        local aimY = (jumpPredEnabled and pred.Y) or currentPos.Y
+
+                        firePos = Vector3.new(pred.X, aimY, pred.Z)
+
+                    elseif isStairs then
+
+                        pT = pT + JUMP_EXTRA_LEAD
+
+                        pred = info.lastPos + vel * pT
+
+                        local aimY = jumpPredEnabled and (pred.Y + math.clamp(vel.Y * 0.15, 0, 6)) or currentPos.Y
+
+                        firePos = Vector3.new(pred.X, aimY, pred.Z)
+
+                    else
+
+                        local lastVel = info.lastVel or Vector3.new(0,0,0)
+
+                        local horizVel = Vector3.new(vel.X, 0, vel.Z)
+
+                        local lastHorizVel = Vector3.new(lastVel.X, 0, lastVel.Z)
+
+                        local dv = (horizVel - lastHorizVel).Magnitude
+
+                        if dv > DIR_CHANGE_THRESHOLD and info.lastFirePos and (tick() - (info.lastFireTick or 0) <= RE_SHOOT_MAX_AGE) then
+
+                            firePos = info.lastFirePos
+
+                        else
+
+                            local extraLead = math.clamp(dist/200, 0, 0.3)
+
+                            pT = pT + extraLead
+
+                            pred = info.lastPos + vel * pT
+
+                            local aimY = (jumpPredEnabled and pred.Y) or currentPos.Y
+
+                            firePos = Vector3.new(pred.X, aimY, pred.Z)
+
+                        end
+
+                    end
+
+                end
+
+            else
+
+                local pred = info.lastPos + vel * pT
+
+                local aimY = (jumpPredEnabled and pred.Y) or currentPos.Y
+
+                firePos = Vector3.new(pred.X, aimY, pred.Z)
+
+            end
+
+        else
+
+            firePos = currentPos
+
+        end
+
+        if smartPredEnabled and firePos and currentPos and math.random(100) <= USE_CURRENT_POS_PERCENT then
+
+            firePos = Vector3.new(currentPos.X, firePos.Y, currentPos.Z)
+
+        end
+
+        if not lastInfo[tgt.Name] then lastInfo[tgt.Name] = {} end
+
+        lastInfo[tgt.Name].lastFirePos = firePos
+
+        lastInfo[tgt.Name].lastFireTick = tick()
+
+        if grappleRemote and grappleRemote.FireServer then
+
+            pcall(function() grappleRemote:FireServer(firePos) end)
+
+        end
+
+    end)
+
+    return true
+
+end
+
+local function disableAutoGrappler()
+
+    disconnectMouseClickConn()
+
+    if grappleToolRef then
+
+        tryRestoreMainScript(grappleToolRef)
+
+    end
+
+    grappleRemote = nil
+
+    grappleToolRef = nil
+
+end
+
+-- === Click connector ===
+
+local btn1Conn
+
+local function enableClickConnector()
+
+    if btn1Conn then return end
+
+    local mouse = localPlayer:GetMouse()
+
+    if not mouse then return end
+
+    btn1Conn = mouse.Button1Down:Connect(function()
+
+        if not clickConnectorEnabled then return end
+
+        local tgtPart = mouse.Target
+
+        if tgtPart then
+
+            local mdl = tgtPart:FindFirstAncestorOfClass("Model")
+
+            local pl = mdl and Players:GetPlayerFromCharacter(mdl)
+
+            if pl then
+
+                if selectedPlayers[pl.Name] then
+
+                    -- user deselected via click-connector: remove entry and clear textbox if shown
+
+                    selectedPlayers[pl.Name] = nil
+
+                    if targetTextBox and targetTextBox.Text and targetTextBox.Text == pl.Name then
+
+                        targetTextBox.Text = ""
+
+                    end
+
+                    sendNotification("AutoGrapple", "Deselected: " .. pl.Name, 1.2)
+
+                else
+
+                    selectedPlayers[pl.Name] = true
+
+                    sendNotification("AutoGrapple", "Selected: " .. pl.Name, 1.2)
+
+                end
+
+                updateSelectionUI()
+
+            end
+
+        end
+
+    end)
+
+end
+
+local function disableClickConnector()
+
+    if btn1Conn then
+
+        pcall(function() btn1Conn:Disconnect() end)
+
+        btn1Conn = nil
+
+    end
+
+end
+
+-- === Auto TP spin teleport helper ===
+
+local function spinTeleportToPlayer(selectedPlayer)
+
+    if not selectedPlayer or not selectedPlayer.Character then return end
+
+    local targetHRP = selectedPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+    local myHRP = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+    if not targetHRP or not myHRP then return end
+
+    local randomX = math.random(-50, 50)
+
+    local randomY = math.random(0, 0)
+
+    local randomZ = math.random(-50, 50)
+
+    pcall(function()
+
+        myHRP.CFrame = targetHRP.CFrame * CFrame.new(randomX, randomY, randomZ)
+
+    end)
+
+end
+
+local function spinTeleportToName(targetName)
+
+    if not targetName or targetName == "" then return end
+
+    local selectedPlayer = nil
+
+    for _, pl in ipairs(Players:GetPlayers()) do
+
+        if pl.Name:lower() == targetName:lower() then
+
+            selectedPlayer = pl
+
+            break
+
+        end
+
+    end
+
+    if not selectedPlayer or not selectedPlayer.Character then return end
+
+    spinTeleportToPlayer(selectedPlayer)
+
+end
+
+local autoTPConn
+
+local function isClickOverGui(pos)
+
+    if not pos then return false end
+
+    local guis = playerGui:GetGuiObjectsAtPosition(pos.X, pos.Y)
+
+    for _, g in ipairs(guis) do
+
+        if g:IsDescendantOf(screenGui) then return true end
+
+    end
+
+    return false
+
+end
+
+-- Updated: onInputBegan chooses nearest selected alive player if multiple selected
+
+local function onInputBegan(input, gameProcessed)
+
+    if gameProcessed then return end
+
+    if not autoTPEnabled then return end
+
+    local t = input.UserInputType
+
+    if t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseButton1 then
+
+        local pos = input.Position
+
+        if isClickOverGui(pos) then return end
+
+        -- prefer selected players (chooseTargetForFire picks nearest alive among selected)
+
+        local tgtPlayer = chooseTargetForFire()
+
+        if tgtPlayer and tgtPlayer.Character and tgtPlayer.Character.PrimaryPart then
+
+            spinTeleportToPlayer(tgtPlayer)
+
+            return
+
+        end
+
+        -- fallback to typed name in textbox
+
+        local name = targetTextBox.Text
+
+        spinTeleportToName(name)
+
+    end
+
+end
+
+local function enableAutoTP()
+
+    if autoTPConn then return end
+
+    autoTPConn = UserInputService.InputBegan:Connect(onInputBegan)
+
+    return true
+
+end
+
+local function disableAutoTP()
+
+    if autoTPConn then
+
+        pcall(function() autoTPConn:Disconnect() end)
+
+        autoTPConn = nil
+
+    end
+
+end
+
+-- === Button wiring ===
+
+autoGrappleButton.MouseButton1Click:Connect(function()
+
+    autoGrapplerEnabled = not autoGrapplerEnabled
+
+    if autoGrapplerEnabled then
+
+        if enableAutoGrappler() then
+
+            autoGrappleButton.Text = "Auto Grappler: ON"
+
+            autoGrappleButton.BackgroundColor3 = Color3.fromRGB(220,255,240)
+
+        else
+
+            autoGrappleButton.Text = "Auto Grappler: ON"
+
+            autoGrappleButton.BackgroundColor3 = Color3.fromRGB(240,230,180)
+
+        end
+
+    else
+
+        disableAutoGrappler()
+
+        autoGrappleButton.Text = "Auto Grappler: OFF"
+
+        autoGrappleButton.BackgroundColor3 = GLASS_TINT
+
+    end
+
+end)
+
+clickConnectButton.MouseButton1Click:Connect(function()
+
+    clickConnectorEnabled = not clickConnectorEnabled
+
+    if clickConnectorEnabled then
+
+        enableClickConnector()
+
+        clickConnectButton.Text = "Click Connector: ON"
+
+        clickConnectButton.BackgroundColor3 = Color3.fromRGB(200,245,255)
+
+    else
+
+        disableClickConnector()
+
+        clickConnectButton.Text = "Click Connector: OFF"
+
+        clickConnectButton.BackgroundColor3 = GLASS_TINT
+
+    end
+
+end)
+
+smartPredButton.MouseButton1Click:Connect(function()
+
+    smartPredEnabled = not smartPredEnabled
+
+    if smartPredEnabled then
+
+        smartPredButton.Text = "SmartPred: ON"
+
+        smartPredButton.BackgroundColor3 = Color3.fromRGB(200,255,200)
+
+    else
+
+        smartPredButton.Text = "SmartPred: OFF"
+
+        smartPredButton.BackgroundColor3 = GLASS_TINT
+
+    end
+
+end)
+
+jumpPredButton.MouseButton1Click:Connect(function()
+
+    jumpPredEnabled = not jumpPredEnabled
+
+    if jumpPredEnabled then
+
+        jumpPredButton.Text = "JumpPred: ON"
+
+        jumpPredButton.BackgroundColor3 = Color3.fromRGB(200,255,200)
+
+    else
+
+        jumpPredButton.Text = "JumpPred: OFF"
+
+        jumpPredButton.BackgroundColor3 = GLASS_TINT
+
+    end
+
+end)
+
+autoTPButton.MouseButton1Click:Connect(function()
+
+    autoTPEnabled = not autoTPEnabled
+
+    if autoTPEnabled then
+
+        enableAutoTP()
+
+        autoTPButton.Text = "Auto TP: ON"
+
+        autoTPButton.BackgroundColor3 = Color3.fromRGB(200,255,200)
+
+    else
+
+        disableAutoTP()
+
+        autoTPButton.Text = "Auto TP: OFF"
+
+        autoTPButton.BackgroundColor3 = GLASS_TINT
+
+    end
+
+end)
+
+-- Random select
+
+randomSelectButton.MouseButton1Click:Connect(function()
+
+    local pool = {}
+
+    for _, pl in ipairs(Players:GetPlayers()) do
+
+        if pl ~= localPlayer then table.insert(pool, pl) end
+
+    end
+
+    if #pool == 0 then sendNotification("AutoGrapple", "No other players to select", 2); return end
+
+    local picked = pool[math.random(1,#pool)]
+
+    selectedPlayers = {}
+
+    selectedPlayers[picked.Name] = true
+
+    updatePlayerList()
+
+    sendNotification("AutoGrapple", "Random Selected: "..picked.Name, 2)
+
+end)
+
+-- Deselect (NEW)
+
+deselectButton.MouseButton1Click:Connect(function()
+
+    selectedPlayers = {}
+
+    -- clear textbox because user explicitly cleared all selections
+
+    if targetTextBox then targetTextBox.Text = "" end
+
+    updatePlayerList()
+
+    sendNotification("AutoGrapple", "All players deselected", 1.5)
+
+end)
+
+-- === Anti Grapple Implementation (integrated from original GoatedTest) ===
+
+local TELEPORT_DISTANCE = 25
+
+local anti_hookHitboxes = {} -- mapping hook -> hitbox
+
+local function createHitboxForHook(hook)
+
+    if anti_hookHitboxes[hook] then return end
+
+    local hitbox = Instance.new("Part")
+
+    hitbox.Size = Vector3.new(3.5, 3.5, 150)
+
+    hitbox.Anchored = true
+
+    hitbox.CanCollide = false
+
+    hitbox.CanTouch = false
+
+    hitbox.Transparency = 0.6
+
+    hitbox.Material = Enum.Material.ForceField
+
+    hitbox.Color = Color3.fromRGB(230, 90, 90)
+
+    hitbox.Name = "LocalGrappleHitbox"
+
+    hitbox.Parent = Workspace
+
+    anti_hookHitboxes[hook] = hitbox
+
+end
+
+local function removeHitboxForHook(hook)
+
+    if anti_hookHitboxes[hook] then
+
+        pcall(function() anti_hookHitboxes[hook]:Destroy() end)
+
+        anti_hookHitboxes[hook] = nil
+
+    end
+
+end
+
+local function updateAntiHitboxes()
+
+    local ropesFolder = Workspace:FindFirstChild("Ropes")
+
+    local existing = {}
+
+    if ropesFolder and ropesFolder:IsA("Folder") then
+
+        for _, playerFolder in pairs(ropesFolder:GetChildren()) do
+
+            if playerFolder:IsA("Folder") and playerFolder.Name ~= localPlayer.Name then
+
+                for _, hook in pairs(playerFolder:GetChildren()) do
+
+                    if hook:IsA("BasePart") and hook.Name == "Hook" then
+
+                        existing[hook] = true
+
+                        if not anti_hookHitboxes[hook] then createHitboxForHook(hook) end
+
+                        if anti_hookHitboxes[hook] then
+
+                            anti_hookHitboxes[hook].CFrame = hook.CFrame * CFrame.new(0,0,-75)
+
+                        end
+
+                    end
+
+                end
+
+            end
+
+        end
+
+    end
+
+    for hook, _ in pairs(anti_hookHitboxes) do
+
+        if not existing[hook] or not hook.Parent then removeHitboxForHook(hook) end
+
+    end
+
+end
+
+local function isPointInPart(part, point)
+
+    local relative = part.CFrame:PointToObjectSpace(point)
+
+    local size = part.Size / 2
+
+    return math.abs(relative.X) <= size.X and math.abs(relative.Y) <= size.Y and math.abs(relative.Z) <= size.Z
+
+end
+
+local function isSafePosition(position)
+
+    for _, hitbox in pairs(anti_hookHitboxes) do
+
+        if isPointInPart(hitbox, position) then return false end
+
+    end
+
+    return true
+
+end
+
+local function getSafeTeleportPosition(currentPosition)
+
+    for _ = 1, 10 do
+
+        local angle = math.random() * 2 * math.pi
+
+        local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
+
+        local offset = direction * TELEPORT_DISTANCE
+
+        local newPos = currentPosition + offset
+
+        if isSafePosition(newPos) then return newPos end
+
+    end
+
+    return currentPosition
+
+end
+
+local function antiGrappleHeartbeat()
+
+    local character = localPlayer.Character
+
+    if not character then return end
+
+    updateAntiHitboxes()
+
+    local limbs = {}
+
+    for _, part in pairs(character:GetChildren()) do
+
+        if part:IsA("BasePart") then table.insert(limbs, part) end
+
+    end
+
+    for _, limb in pairs(limbs) do
+
+        for _, hitbox in pairs(anti_hookHitboxes) do
+
+            if isPointInPart(hitbox, limb.Position) then
+
+                local newPos = getSafeTeleportPosition(limb.Position)
+
+                if newPos ~= limb.Position then
+
+                    pcall(function()
+
+                        limb.Velocity = Vector3.new(0,0,0)
+
+                        character:MoveTo(newPos)
+
+                    end)
+
+                end
+
+                return
+
+            end
+
+        end
+
+    end
+
+end
+
+local function enableAntiGrapple()
+
+    if antiGrappleConnection then antiGrappleConnection:Disconnect(); antiGrappleConnection = nil end
+
+    antiGrappleConnection = RunService.Heartbeat:Connect(antiGrappleHeartbeat)
+
+    antiGrappleEnabled = true
+
+    antiGrappleToggle.Text = "Anti Grapple: ON"
+
+    antiGrappleToggle.BackgroundColor3 = Color3.fromRGB(200,255,255)
+
+end
+
+local function disableAntiGrapple()
+
+    if antiGrappleConnection then antiGrappleConnection:Disconnect(); antiGrappleConnection = nil end
+
+    for hook,_ in pairs(anti_hookHitboxes) do removeHitboxForHook(hook) end
+
+    anti_hookHitboxes = {}
+
+    antiGrappleEnabled = false
+
+    antiGrappleToggle.Text = "Anti Grapple: OFF"
+
+    antiGrappleToggle.BackgroundColor3 = GLASS_TINT
+
+end
+
+antiGrappleToggle.MouseButton1Click:Connect(function()
+
+    antiGrappleEnabled = not antiGrappleEnabled
+
+    if antiGrappleEnabled then enableAntiGrapple() else disableAntiGrapple() end
+
+end)
+
+-- === Top small buttons logic (yellow = hide, red = destroy) ===
+
+topYellowBtn.MouseButton1Click:Connect(function()
+
+    -- hide the main GUI and create a small draggable "Show GUI" handle
+
+    if mainFrame and mainFrame.Parent then
+
+        mainFrame.Visible = false
+
+    end
+
+    -- create the handle if needed
+
+    createShowHandle()
+
+    sendNotification("AutoGrapple", "GUI hidden. Use 'Show GUI' handle.", 2)
+
+end)
+
+topRedBtn.MouseButton1Click:Connect(function()
+
+    -- full destroy: cleanup features then destroy GUIs
+
+    disableAutoGrappler()
+
+    disableClickConnector()
+
+    disableAutoTP()
+
+    disableAntiGrapple()
+
+    -- destroy show handle if present
+
+    if showHandleScreenGui and showHandleScreenGui.Parent then
+
+        pcall(function() showHandleScreenGui:Destroy() end)
+
+        showHandleScreenGui = nil
+
+        showHandleBtn = nil
+
+    end
+
+    -- destroy main screen GUI
+
+    if screenGui and screenGui.Parent then
+
+        pcall(function() screenGui:Destroy() end)
+
+    end
+
+    sendNotification("AutoGrapple", "GUI destroyed and cleanup performed.", 2)
+
+end)
+
+-- === Bind toggles for textboxes (target/pred) and finalize ===
+
+-- re-wire textboxes to keep placeholder on focus
+
+targetTextBox.FocusLost:Connect(function(enterPressed)
+
+    if enterPressed then
+
+        -- just accept text as is
+
+    end
+
+end)
+
+-- Character respawn handling
+
+local function onCharacterAdded(character)
+
+    task.wait(0.1)
+
+    if clickConnectorEnabled then
+
+        disableClickConnector(); enableClickConnector()
+
+    end
+
+    if autoGrapplerEnabled then
+
+        disableAutoGrappler()
+
+        task.defer(function()
+
+            task.wait(0.1)
+
+            enableAutoGrappler()
+
+        end)
+
+    end
+
+end
+
+if localPlayer.Character then onCharacterAdded(localPlayer.Character) end
+
+localPlayer.CharacterAdded:Connect(onCharacterAdded)
+
+-- Cleanup on script destroy
+
+script.Parent = screenGui -- ensures script remains in same place for destroying hooks (if needed)
+
+if script and script.Destroying then
+
+    script.Destroying:Connect(function()
+
+        disableAutoGrappler()
+
+        disableClickConnector()
+
+        disableAutoTP()
+
+        disableAntiGrapple()
+
+        if showHandleScreenGui and showHandleScreenGui.Parent then
+
+            pcall(function() showHandleScreenGui:Destroy() end)
+
+        end
+
+    end)
+
+end
+
+-- expose small hint
+
+sendNotification("AutoGrapple","GUI loaded — drag to move. 'Clear' removes selected players. Use yellow/red buttons at top-right.", 3)
+
+-- End of LocalScript
